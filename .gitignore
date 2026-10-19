@@ -1,0 +1,24 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Environment variables and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Real client documents and databases
+*.accdb
+*.mdb
+*.pdf
+
+# Local processing directories
+intake/
+original-batches/
+working/
+exceptions/
+logs/
+test-client-folders/
