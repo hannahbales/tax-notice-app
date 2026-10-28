@@ -1,6 +1,7 @@
 from pathlib import Path
+from datetime import datetime
+import shutil
 from io import BytesIO
-
 import pymupdf
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
@@ -9,6 +10,7 @@ from pypdf import PdfReader, PdfWriter
 BASE_DIR = Path(r"C:\TTI-Notice-Dev")
 INPUT_FILE = BASE_DIR / "intake" / "test_batch.pdf"
 OUTPUT_DIR = BASE_DIR / "working" / "split_notices"
+ARCHIVE_DIR = BASE_DIR / "original-batches"
 
 # adjustable blank-page detection settings
 WHITE_THRESHOLD = 245
@@ -78,12 +80,41 @@ def save_notice(pages, notice_number):
     )
 
 
-def split_pdf():
-    """Split PDF wherever a blank page is detected."""
+def archive_original(input_file):
+    """
+    Save an untouched copy of the original batch PDF.
 
-    if not INPUT_FILE.exists():
+    Uses a unique filename to prevent overwriting.
+    """
+
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+    archive_path = (
+        ARCHIVE_DIR / f"{timestamp}_{input_file.name}"
+    )
+
+    # exclusive creation, no overwrites
+    with input_file.open("rb") as source:
+        with archive_path.open("xb") as destination:
+            shutil.copyfileobj(source, destination)
+
+    print(f"Original batch archived: {archive_path.name}")
+
+    return archive_path
+
+def split_pdf():
+    """Archive original batch, then split at blank pages."""
+
+    if not INPUT_FILE.is_file():
         print(f"Input PDF not found: {INPUT_FILE}")
         return
+
+    # save og before processing or splitting
+    archive_path = archive_original(INPUT_FILE)
+
+    print(f"Archive saved to: {archive_path}")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
