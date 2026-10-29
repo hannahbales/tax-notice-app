@@ -5,10 +5,11 @@ from io import BytesIO
 import pymupdf
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
+from uuid import uuid4
 
 
 BASE_DIR = Path(r"C:\TTI-Notice-Dev")
-INPUT_FILE = BASE_DIR / "intake" / "test_batch.pdf"
+INPUT_FILE = BASE_DIR / "intake" / "test_batch.pdf" # testing
 OUTPUT_DIR = BASE_DIR / "working" / "split_notices"
 ARCHIVE_DIR = BASE_DIR / "original-batches"
 
@@ -54,7 +55,7 @@ def is_blank_page(page):
     return white_ratio >= BLANK_PAGE_RATIO
 
 
-def save_notice(pages, notice_number):
+def save_notice(pages, notice_number, output_dir):
     """Save a group of pages as a separate PDF."""
 
     writer = PdfWriter()
@@ -63,7 +64,7 @@ def save_notice(pages, notice_number):
         writer.add_page(page)
 
     output_path = (
-        OUTPUT_DIR / f"notice_{notice_number:03d}.pdf"
+        output_dir / f"notice_{notice_number:03d}.pdf"
     )
 
     if output_path.exists():
@@ -104,25 +105,31 @@ def archive_original(input_file):
 
     return archive_path
 
-def split_pdf():
-    """Archive original batch, then split at blank pages."""
+def split_pdf(input_file=None):
+    input_file = Path(input_file) if input_file else INPUT_FILE
 
-    if not INPUT_FILE.is_file():
-        print(f"Input PDF not found: {INPUT_FILE}")
-        return
+    if not input_file.is_file():
+        raise FileNotFoundError(input_file)
 
-    # save og before processing or splitting
-    archive_path = archive_original(INPUT_FILE)
+    run_id = (
+        datetime.now().strftime("%Y%m%d_%H%M%S")
+        + "_"
+        + uuid4().hex[:8]
+    )
 
+    output_dir = BASE_DIR / "working" / "split_notices" / run_id
+    output_dir.mkdir(parents=True, exist_ok=False)
+
+    archive_path = archive_original(input_file)
     print(f"Archive saved to: {archive_path}")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # PyMuPDF: visually inspect pages
-    visual_doc = pymupdf.open(INPUT_FILE)
+    visual_doc = pymupdf.open(input_file)
 
     # pypdf: preserve original pages when splitting
-    reader = PdfReader(INPUT_FILE)
+    reader = PdfReader(input_file)
 
     current_notice = []
     notice_number = 1
@@ -141,7 +148,8 @@ def split_pdf():
                 if current_notice:
                     save_notice(
                         current_notice,
-                        notice_number
+                        notice_number,
+                        output_dir
                     )
 
                     notice_number += 1
@@ -152,7 +160,7 @@ def split_pdf():
 
         # save final notice
         if current_notice:
-            save_notice(current_notice, notice_number)
+            save_notice(current_notice, notice_number, output_dir)
 
         print("\nPDF splitting complete!")
 
