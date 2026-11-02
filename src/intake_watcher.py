@@ -1,4 +1,5 @@
 
+from importlib.resources import path
 from pathlib import Path
 from time import monotonic, sleep
 import hashlib
@@ -23,6 +24,7 @@ MAX_ATTEMPTS = 3
 SCAN_INTERVAL = 5
 STABLE_SECONDS = 5
 PDF_READY_TIMEOUT = 120
+READINESS_RETRY_DELAY = 10
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,11 +54,11 @@ def file_hash(path):
 
 def wait_for_complete_pdf(path):
     """
-    Wait until a PDF is unchanged for several seconds
-    and can be opened successfully.
+    Wait for a PDF to become stable and readable.
 
-    This reduces the chance of processing a PDF while
-    a scanner is still writing it.
+    Returns:
+        True if the PDF is ready.
+        False if it remains unreadable after the timeout.
     """
     start = monotonic()
     previous_signature = None
@@ -65,34 +67,40 @@ def wait_for_complete_pdf(path):
     while monotonic() - start < PDF_READY_TIMEOUT:
         try:
             stat = path.stat()
-
-            signature = (
-                stat.st_size,
-                stat.st_mtime_ns,
-            )
+            signature = (stat.st_size, stat.st_mtime_ns)
 
             if stat.st_size == 0:
                 stable_since = None
 
-            elif signature == previous_signature:
+            elif signature != previous_signature:
+                previous_signature = signature
+                stable_since = None
+
+            else:
                 if stable_since is None:
                     stable_since = monotonic()
 
                 if monotonic() - stable_since >= STABLE_SECONDS:
-                    # Confirm the PDF is readable.
-                    reader = PdfReader(path, strict=True)
-                    page_count = len(reader.pages)
+                    try:
+                        reader = PdfReader(path, strict=True)
 
-                    if page_count == 0:
-                        raise ValueError("PDF contains no pages")
+                        if len(reader.pages) == 0:
+                            raise ValueError("PDF contains no pages")
 
-                    return True
+                        return True
 
-            else:
-                previous_signature = signature
-                stable_since = None
+                    except Exception as error:
+                        logger.warning(
+                            "PDF is stable but unreadable: %s (%s)",
+                            path.name,
+                            error,
+                        )
 
-        except Exception as error:
+                        # continue waiting in case the
+                        # scanner is still finishing.
+                        stable_since = monotonic()
+
+        except OSError as error:
             logger.debug(
                 "Waiting for %s: %s",
                 path.name,
@@ -154,6 +162,91 @@ def save_for_manual_review(path, file_id):
 
     return review_path
 
+def handle_unreadable_pdf(path):
+    """
+    Handle a PDF that never became readable.
+
+    Records the failure and preserves the file
+    for manual review when possible.
+    """
+
+    logger.error(
+        "PDF readiness timeout: %s",
+        path.name,
+    )
+
+    try:
+        if not path.is_file():
+            logger.error(
+                "File no longer exists: %s",
+                path.name,
+            )
+            return
+
+        file_id = file_hash(path)
+
+        record = get_record(file_id)
+
+        if record is not None:
+            status, previous_attempts = record
+
+            if status == "completed":
+                return
+
+            if previous_attempts >= MAX_ATTEMPTS:
+                save_for_manual_review(path, file_id)
+                return
+
+            start_attempt = previous_attempts + 1
+
+        else:
+            start_attempt = 1
+
+        for attempt in range(
+            start_attempt,
+            MAX_ATTEMPTS + 1,
+        ):
+            logger.warning(
+                "Readiness failure for %s (attempt %s/%s)",
+                path.name,
+                attempt,
+                MAX_ATTEMPTS,
+            )
+
+            record_status(
+                file_id=file_id,
+                filename=path.name,
+                status="failed",
+                attempts=attempt,
+                error="PDF did not become readable",
+            )
+
+            if attempt < MAX_ATTEMPTS:
+                sleep(READINESS_RETRY_DELAY)
+
+                # check whether it became readable.
+                if wait_for_complete_pdf(path):
+                    logger.info(
+                        "PDF became readable: %s",
+                        path.name,
+                    )
+
+                    # resume normal processing.
+                    process_file(path)
+                    return
+
+        save_for_manual_review(path, file_id)
+
+        logger.error(
+            "MANUAL REVIEW REQUIRED: unreadable PDF %s",
+            path.name,
+        )
+
+    except Exception:
+        logger.exception(
+            "Could not preserve unreadable PDF: %s",
+            path.name,
+        )
 
 # process a PDF with automatic retries
 
@@ -168,10 +261,7 @@ def process_file(path):
 
     # wait for the scanner or file copy to finish.
     if not wait_for_complete_pdf(path):
-        logger.error(
-            "PDF is not ready for processing: %s",
-            path.name,
-        )
+        handle_unreadable_pdf(path)
         return
 
     # identify the PDF by its content.
