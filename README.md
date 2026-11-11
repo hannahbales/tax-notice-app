@@ -8,3 +8,30 @@ and PDF filing system.
 - Microsoft Access (read-only)
 - Azure AI Document Intelligence
 - Windows Network File Shares
+## Setup
+```
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+```
+
+## Separator sheets
+Notices are split on a printed **QR separator sheet**, not a blank page
+(blank pages are dropped, so duplex scanning is safe).
+
+1. `python scripts/make_separator_sheet.py` creates `separator_sheet.pdf`.
+2. Print it double-sided and reuse the sheets.
+3. Put one sheet between each notice, then scan the whole stack once.
+
+## Running
+- Watcher: `python src/intake_watcher.py`
+- Split one file by hand: `python src/pdf_splitter.py path\to\batch.pdf`
+- Retry a failed batch: `python src/retry_failed.py --filename name.pdf`
+
+Each split batch gets a `manifest.json` that lists, for every page, its
+kind (content / separator / blank) and ink level, plus any notices
+flagged for review.
+
+## Tests
+`python -m pytest`. Test batches (fictional data) live in
+`scripts/generate_test_batch.py`. Each one declares the result it
+should produce, and the tests check every batch.

@@ -1,15 +1,22 @@
 
 import sqlite3
-from pathlib import Path
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
-BASE_DIR = Path(r"C:\TTI-Notice-Dev")
-DB_PATH = BASE_DIR / "processing_history.db"
+import config
 
 
+@contextmanager
 def connect():
-    BASE_DIR.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(DB_PATH)
+    """Open the history DB, commit on success, and always close it."""
+    config.BASE_DIR.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(config.DB_PATH, timeout=30)
+
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def initialize_database():
@@ -27,13 +34,8 @@ def initialize_database():
 
 
 def get_status(file_id):
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT status FROM processed_files WHERE file_id = ?",
-            (file_id,)
-        ).fetchone()
-
-    return row[0] if row else None
+    record = get_record(file_id)
+    return record[0] if record else None
 
 
 def record_status(file_id, filename, status, attempts, error=None):
@@ -54,6 +56,7 @@ def record_status(file_id, filename, status, attempts, error=None):
                 updated_at = excluded.updated_at
         """, (file_id, filename, status, attempts, error, now))
 
+
 def get_record(file_id):
     with connect() as conn:
         return conn.execute(
@@ -65,7 +68,7 @@ def get_record(file_id):
             (file_id,)
         ).fetchone()
 
-    
+
 def reset_failed_file(file_id):
     """
     Reset a failed PDF so the watcher can retry it.

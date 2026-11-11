@@ -1,31 +1,15 @@
 
 import argparse
-import hashlib
 from pathlib import Path
 
+import config
+from file_utils import file_hash
 from processing_history import (
     initialize_database,
     get_record,
     reset_failed_file,
 )
 
-
-BASE_DIR = Path(r"C:\TTI-Notice-Dev")
-INTAKE_DIR = BASE_DIR / "intake"
-
-
-def file_hash(path):
-    """Generate the same SHA-256 ID used by the watcher."""
-    sha256 = hashlib.sha256()
-
-    with path.open("rb") as file:
-        for chunk in iter(
-            lambda: file.read(1024 * 1024),
-            b"",
-        ):
-            sha256.update(chunk)
-
-    return sha256.hexdigest()
 
 
 def retry_failed(filename):
@@ -38,7 +22,7 @@ def retry_failed(filename):
         print("ERROR: Provide a filename, not a path.")
         return
 
-    path = INTAKE_DIR / filename
+    path = config.INTAKE_DIR / filename
 
     if not path.is_file():
         print(f"ERROR: PDF not found: {path}")

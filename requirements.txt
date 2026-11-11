@@ -1,0 +1,9 @@
+# runtime
+pymupdf
+opencv-python-headless
+numpy
+qrcode[pil]
+pillow
+
+# development / tests
+pytest
