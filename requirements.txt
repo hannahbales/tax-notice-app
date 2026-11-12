@@ -4,6 +4,8 @@ opencv-python-headless
 numpy
 qrcode[pil]
 pillow
+azure-ai-documentintelligence
+python-dotenv
 
 # development / tests
 pytest

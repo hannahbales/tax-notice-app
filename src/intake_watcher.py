@@ -8,7 +8,8 @@ import pymupdf
 
 import config
 from file_utils import copy_verified, file_hash
-from pdf_splitter import BatchRejected, find_archive, split_pdf
+from ocr import OcrUnavailable, ocr_batch
+from pdf_splitter import BatchRejected, batch_dir, find_archive, split_pdf
 from processing_history import (
     get_record,
     initialize_database,
@@ -32,6 +33,10 @@ UNREADABLE_GRACE_SECONDS = 30
 # safety cap for a file that keeps changing (huge or very slow copy).
 MAX_WAIT_SECONDS = 15 * 60
 
+# when Azure OCR is unavailable (bad key, quota used up, outage),
+# stop starting new batches for this long, then try again.
+OCR_PAUSE_SECONDS = 5 * 60
+
 # a finished PDF ends with %%EOF (some scanners add trailing bytes).
 EOF_TAIL_BYTES = 2048
 
@@ -46,6 +51,9 @@ _known_files = {}
 # up, or already sent to manual review). Re-checked against the DB
 # each cycle, so a reset via retry_failed.py is still picked up.
 _settled = set()
+
+# monotonic() time until which new processing is paused (Azure down).
+_paused_until = 0.0
 
 
 # check if pdf is ready
@@ -344,6 +352,9 @@ def process_file(path):
     if not _is_candidate(path):
         return
 
+    if monotonic() < _paused_until:
+        return
+
     file_id = _identify(path)
     if file_id is None:
         return
@@ -389,7 +400,10 @@ def process_file(path):
             )
 
             # archives the original, splits it, and writes a manifest.
-            split_pdf(path, file_id)
+            manifest = split_pdf(path, file_id)
+
+            # OCR each notice (skips notices done in an earlier attempt).
+            ocr_batch(batch_dir(manifest))
 
             record_status(
                 file_id=file_id,
@@ -400,6 +414,19 @@ def process_file(path):
 
             logger.info("Successfully processed: %s", path.name)
             remove_from_intake(path, file_id)
+            return
+
+        except OcrUnavailable as error:
+            # not this batch's fault: keep it in intake, don't use up
+            # an attempt, and pause until Azure is likely back.
+            record_status(
+                file_id=file_id,
+                filename=path.name,
+                status="waiting",
+                attempts=attempt - 1,
+                error=str(error),
+            )
+            pause_for_ocr(error)
             return
 
         except BatchRejected as error:
@@ -441,6 +468,18 @@ def process_file(path):
         path,
         file_id,
         f"Failed after {MAX_ATTEMPTS} attempts: {last_error}",
+    )
+
+
+def pause_for_ocr(error):
+    global _paused_until
+    _paused_until = monotonic() + OCR_PAUSE_SECONDS
+
+    logger.error(
+        "Azure OCR unavailable: %s. Pausing new batches for %s minutes; "
+        "waiting batches stay in intake and resume automatically.",
+        error,
+        OCR_PAUSE_SECONDS // 60,
     )
 
 

@@ -152,6 +152,11 @@ def _notice_warnings(group):
     return warnings
 
 
+def batch_dir(manifest):
+    """Folder holding a split batch's notices and manifest."""
+    return config.SPLIT_DIR / Path(manifest["archive_file"]).stem
+
+
 def _load_existing_manifest(output_dir, file_id):
     manifest_path = output_dir / MANIFEST_NAME
 
