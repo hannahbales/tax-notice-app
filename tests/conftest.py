@@ -55,28 +55,48 @@ class FakeAzure:
         if self.error is not None:
             raise self.error
 
+        pages = []
         with pymupdf.open(stream=body.read(), filetype="pdf") as doc:
-            texts = [page.get_text() for page in doc]
-
-        texts = texts[: self.max_pages]
+            for number, page in enumerate(doc, start=1):
+                if self.max_pages and number > self.max_pages:
+                    break
+                pages.append(_fake_page(page, number, self.confidence))
 
         return FakePoller(
             FakeResult(
                 apiVersion="fake",
                 modelId=model_id,
-                content="\n".join(texts),
-                pages=[
-                    {
-                        "pageNumber": number,
-                        "words": [
-                            {"content": w, "confidence": self.confidence}
-                            for w in text.split()
-                        ],
-                    }
-                    for number, text in enumerate(texts, start=1)
-                ],
+                content="\n".join(line["content"] for p in pages for line in p["lines"]),
+                pages=pages,
             )
         )
+
+
+def _fake_page(page, number, confidence):
+    """Azure-shaped page: lines with polygons in inches, plus words."""
+    lines = []
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            text = "".join(span["text"] for span in line["spans"]).strip()
+            if not text:
+                continue
+            x0, y0, x1, y1 = (v / 72 for v in line["bbox"])
+            lines.append(
+                {"content": text, "polygon": [x0, y0, x1, y0, x1, y1, x0, y1]}
+            )
+
+    return {
+        "pageNumber": number,
+        "width": page.rect.width / 72,
+        "height": page.rect.height / 72,
+        "unit": "inch",
+        "lines": lines,
+        "words": [
+            {"content": word, "confidence": confidence}
+            for line in lines
+            for word in line["content"].split()
+        ],
+    }
 
 
 @pytest.fixture(autouse=True)

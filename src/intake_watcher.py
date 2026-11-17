@@ -7,6 +7,7 @@ from time import monotonic, sleep
 import pymupdf
 
 import config
+from extractor import extract_batch
 from file_utils import copy_verified, file_hash
 from ocr import OcrUnavailable, ocr_batch
 from pdf_splitter import BatchRejected, batch_dir, find_archive, split_pdf
@@ -404,6 +405,9 @@ def process_file(path):
 
             # OCR each notice (skips notices done in an earlier attempt).
             ocr_batch(batch_dir(manifest))
+
+            # read taxpayer and notice details from the OCR text.
+            extract_batch(batch_dir(manifest))
 
             record_status(
                 file_id=file_id,

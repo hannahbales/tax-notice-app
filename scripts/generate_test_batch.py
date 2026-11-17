@@ -141,6 +141,90 @@ class BatchBuilder:
 
             self._back_side()
 
+    def formal_notice(
+        self,
+        *,
+        agency_lines,
+        rows,
+        name_lines,
+        street="123 MAIN ST",
+        city="ANYTOWN, TX 75001-1234",
+        title="",
+        body_lines=(),
+        pages=1,
+        footer="",
+        payment_address=None,
+    ):
+        """
+        A notice laid out like real IRS / state mail:
+          - agency return address, top left
+          - label / value block, top right (labels and values in
+            separate columns, as on IRS notices)
+          - the taxpayer's mailing block
+          - title and body text
+          - optional payment voucher on the last page, repeating the
+            taxpayer block next to the agency's payment address
+        """
+        body = list(body_lines) + [
+            FILLER[i : i + 80] for i in range(0, len(FILLER), 80)
+        ] * 3
+
+        for number in range(1, pages + 1):
+            page = self._new_page()
+
+            if number == 1:
+                y = 60
+                for line in agency_lines:
+                    page.insert_text((72, y), line, fontsize=10)
+                    y += 13
+
+                y = 60
+                for label, value in rows:
+                    # keep a clear gap after long labels
+                    label_end = 340 + pymupdf.get_text_length(label, fontsize=10)
+                    page.insert_text((340, y), label, fontsize=10)
+                    page.insert_text((max(470, label_end + 15), y), value, fontsize=10)
+                    y += 15
+
+                y = 190
+                for line in [*name_lines, street, city]:
+                    page.insert_text((90, y), line, fontsize=11)
+                    y += 14
+
+                y = 290
+                if title:
+                    page.insert_text((72, y), title, fontsize=14)
+                    y += 28
+
+            else:
+                label, value = rows[0]
+                page.insert_text((72, 60), f"{label} {value}", fontsize=10)
+                page.insert_text((470, 60), f"Page {number} of {pages}", fontsize=10)
+                y = 100
+
+            for line in body:
+                page.insert_text((72, y), line, fontsize=11)
+                y += 16
+
+            if number == pages and payment_address:
+                y = 600
+                page.insert_text((72, y), "Payment", fontsize=12)
+                for label, value in rows[:1]:
+                    page.insert_text((340, y), f"{label} {value}", fontsize=10)
+                y += 30
+                for line in [*name_lines, street, city]:
+                    page.insert_text((72, y), line, fontsize=10)
+                    y += 13
+                y = 640
+                for line in payment_address:
+                    page.insert_text((340, y), line, fontsize=10)
+                    y += 13
+
+            if footer:
+                page.insert_text((72, 750), footer, fontsize=8)
+
+            self._back_side()
+
     def separator(self, damaged=False):
         page = add_separator_page(self.doc)
 
@@ -362,6 +446,135 @@ def _(b):
     b.notice("Charlie Webb", "XXX-XX-1701", "IRS Notice")
     b.separator(damaged=True)
     b.notice("Skyler Grant", "XXX-XX-1702", "IRS Notice")
+
+
+IRS_RETURN = ["Department of the Treasury", "Internal Revenue Service", "Ogden, UT 84201-0039"]
+IRS_PAYMENT = ["Internal Revenue Service", "P.O. Box 931000", "Louisville, KY 40293-1000"]
+CA_FTB = ["STATE OF CALIFORNIA", "FRANCHISE TAX BOARD", "PO BOX 942867", "SACRAMENTO CA 94267-0001"]
+
+
+@batch("batch_17_notice_variety", [2, 1, 1, 1, 1, 1, 1])
+def _(b):
+    """
+    Realistic layouts for the extractor. Expected values per notice
+    live in tests/test_extractor.py (VARIETY_EXPECTED).
+    """
+    # 1. CP14 balance due, joint filers, masked SSN, payment voucher
+    b.formal_notice(
+        agency_lines=IRS_RETURN,
+        rows=[
+            ("Notice", "CP14"),
+            ("Tax year", "2023"),
+            ("Notice date", "May 20, 2024"),
+            ("Social Security number", "XXX-XX-1234"),
+            ("To contact us", "800-829-0922"),
+            ("Your caller ID", "482913"),
+        ],
+        name_lines=["JOHN A & JANE B SMITH"],
+        title="Amount due: $1,245.80",
+        body_lines=["Pay by June 10, 2024 to avoid additional penalties."],
+        pages=2,
+        footer="Notice CP14 (Rev. 1-2024)",
+        payment_address=IRS_PAYMENT,
+    )
+    b.separator()
+
+    # 2. CP2000 proposed changes, single filer, due date in the body
+    b.formal_notice(
+        agency_lines=IRS_RETURN,
+        rows=[
+            ("Notice", "CP2000"),
+            ("Tax year", "2022"),
+            ("Notice date", "August 5, 2024"),
+            ("Social Security number", "XXX-XX-5678"),
+            ("AUR control number", "1234567890"),
+            ("To contact us", "800-829-8310"),
+        ],
+        name_lines=["MARIA GARCIA"],
+        street="45 OAK AVE APT 2",
+        city="SPRINGFIELD, IL 62704",
+        title="Proposed changes to your 2022 Form 1040",
+        body_lines=["Respond by September 4, 2024."],
+        footer="Notice CP2000 (Rev. 3-2023)",
+    )
+    b.separator()
+
+    # 3. Letter 1058 final notice, names on two lines, tax period date
+    b.formal_notice(
+        agency_lines=IRS_RETURN,
+        rows=[
+            ("Letter date", "03/11/2024"),
+            ("Taxpayer ID number", "XXX-XX-4321"),
+            ("Tax periods", "December 31, 2021"),
+            ("Form", "1040"),
+        ],
+        name_lines=["ROBERT JONES", "LINDA JONES"],
+        street="PO BOX 77",
+        city="RIVERTON WY 82501",
+        title="Final notice of intent to levy",
+        footer="Letter 1058 (Rev. 7-2022)",
+    )
+    b.separator()
+
+    # 4. CP161 business payroll notice, masked EIN, care-of line
+    b.formal_notice(
+        agency_lines=IRS_RETURN,
+        rows=[
+            ("Notice", "CP161"),
+            ("Tax period", "March 31, 2024"),
+            ("Notice date", "June 3, 2024"),
+            ("Employer ID number", "XX-XXX6789"),
+        ],
+        name_lines=["ACME WIDGETS LLC", "% PAT LEE MBR"],
+        street="900 INDUSTRIAL PKWY STE 100",
+        city="DAYTON, OH 45402-1234",
+        title="Request for payment - Form 941",
+        footer="Notice CP161 (Rev. 2-2023)",
+    )
+    b.separator()
+
+    # 5. CP575 EIN assigned: a real notice with no tax year at all
+    b.formal_notice(
+        agency_lines=IRS_RETURN,
+        rows=[
+            ("Date of this notice:", "03-15-2024"),
+            ("Employer Identification Number:", "12-3456789"),
+            ("Form:", "SS-4"),
+            ("Number of this notice:", "CP 575 A"),
+        ],
+        name_lines=["BRIGHT FUTURES FOUNDATION"],
+        street="12 ELM ST",
+        city="BURLINGTON, VT 05401",
+        title="WE ASSIGNED YOU AN EMPLOYER IDENTIFICATION NUMBER",
+    )
+    b.separator()
+
+    # 6. California FTB notice
+    b.formal_notice(
+        agency_lines=CA_FTB,
+        rows=[
+            ("Notice Date:", "04/22/2024"),
+            ("Taxable Year:", "2022"),
+            ("SSN/ITIN:", "XXX-XX-2468"),
+            ("Notice:", "FTB 4502"),
+        ],
+        name_lines=["DANA WHITE"],
+        street="88 PINE RD",
+        city="FRESNO CA 93650",
+        title="Notice of State Income Tax Due",
+    )
+    b.separator()
+
+    # 7. Nothing identifiable: must go to the exceptions report
+    b.formal_notice(
+        agency_lines=[],
+        rows=[],
+        name_lines=[],
+        street="",
+        city="",
+        title="Thank you for your payment",
+        body_lines=["We received your payment and applied it to your account."],
+    )
 
 
 # --- main -----------------------------------------------------------

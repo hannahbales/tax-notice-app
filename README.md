@@ -39,10 +39,23 @@ If Azure is unavailable (bad key, quota used up, outage), the watcher
 pauses for 5 minutes and leaves batches in intake. No attempts are
 used up, and nothing is sent to manual review.
 
+## Extraction
+After OCR, `src/extractor.py` reads each notice's taxpayer name(s),
+SSN/EIN (last 4 digits only), notice/letter number, tax year/period,
+notice date, and agency into `manifest.json` (`"extracted"`).
+
+A notice is `identified` when the client (name or ID), notice number,
+and tax year/period are all found. Otherwise it is `incomplete`,
+flagged `needs_review`, and the reasons are listed for the exceptions
+report. Extraction reads the saved OCR, so re-running it after a rule
+change costs no Azure pages:
+`python src/extractor.py <split batch folder>`
+
 ## Running
 - Watcher: `python src/intake_watcher.py`
 - Split one file by hand: `python src/pdf_splitter.py path\to\batch.pdf`
 - OCR one notice by hand: `python src/ocr.py path\to\notice_001.pdf`
+- Extract (or re-extract) a batch: `python src/extractor.py <batch folder>`
 - Retry a failed batch: `python src/retry_failed.py --filename name.pdf`
 
 Each split batch gets a `manifest.json` that lists, for every page, its
