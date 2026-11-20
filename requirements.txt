@@ -6,6 +6,7 @@ qrcode[pil]
 pillow
 azure-ai-documentintelligence
 python-dotenv
+pyodbc
 
 # development / tests
 pytest

@@ -105,3 +105,41 @@ def fake_azure(monkeypatch):
     fake = FakeAzure()
     monkeypatch.setattr(ocr, "get_client", lambda: fake)
     yield fake
+
+
+# --- fake client database ------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def fake_clients(monkeypatch, tmp_path):
+    """
+    No test ever reads the real Access database. Clients match the
+    fictional people in scripts/generate_test_batch.py; tests can add,
+    remove, or replace entries in the returned list.
+    """
+    import client_db
+
+    root = tmp_path / "client-folders"
+
+    def client(client_id, name, spouse=None, ssn=None, spouse_ssn=None, ein=None, tin=None):
+        folder = root / name.replace(",", "").replace("&", "and")
+        folder.mkdir(parents=True, exist_ok=True)
+        return client_db.client_from_row(
+            dict(client_id=client_id, client_name=name, spouse_name=spouse, ssn=ssn,
+                 spouse_ssn=spouse_ssn, ein=ein, tin=tin, folder=str(folder))
+        )
+
+    clients = [
+        client(101, "Smith, John & Jane", ssn="123-45-1234", spouse_ssn="987-65-4320"),
+        client(102, "Garcia, Maria", ssn="555-12-5678"),
+        client(103, "Jones, Robert", spouse="Jones, Linda", ssn="111-22-4321"),
+        client(104, "Acme Widgets, L.L.C.", ein="12-3456789"),
+        client(105, "Bright Futures Foundation", ein="98-7656789"),
+        client(106, "White, Dana", tin="444-55-2468"),
+        client(107, "Smith, John", ssn="222-33-9999"),  # a different John Smith
+    ]
+    monkeypatch.setattr(client_db, "load_clients", lambda: clients)
+    monkeypatch.setattr(client_db, "db_path", lambda: None)
+
+    import client_matcher  # never search the real file server
+    monkeypatch.setattr(client_matcher, "folders_root", lambda: None)
+    return clients

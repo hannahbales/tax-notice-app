@@ -697,6 +697,9 @@ def extract_batch(batch_dir):
 
         notice["extracted"] = extracted
         notice["needs_review"] = bool(notice["warnings"]) or bool(problems(extracted))
+        # a client match made from the old extraction is stale
+        notice.pop("match", None)
+        notice.pop("review_reasons", None)
         counts[extracted["status"]] += 1
 
     partial = manifest_path.with_name(manifest_path.name + ".partial")

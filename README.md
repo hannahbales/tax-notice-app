@@ -51,11 +51,61 @@ report. Extraction reads the saved OCR, so re-running it after a rule
 change costs no Azure pages:
 `python src/extractor.py <split batch folder>`
 
+## Client matching
+After extraction, `src/client_matcher.py` looks up each notice's client
+in the Access database (read-only) and works out the client's folder.
+
+- **Clients:** `LeadsTable` rows with a `ClientDate` (current clients),
+  plus their businesses from `tblBusinesses`.
+- **Match:** a notice is `matched` only when a name (person or business)
+  **and** the SSN/EIN last 4 agree with exactly one client. Anything else
+  (`suggested`, `conflict`, `ambiguous`, `not_found`, `no_client_info`)
+  goes to review with a reason.
+- **Folder:** for each folder in `CLIENT_FOLDERS_ROOT` (Resolution, then
+  Tax Prep Only), `<root>\<first letter of last name>\<Last, First and
+  SpouseFirst>`. Folder names are typed by hand, so if that exact folder
+  doesn't exist, the letter folder and then the new-client intake folders
+  are searched for one naming the client or their nickname (`Last_First`
+  names included). Folders named "... Copy" are skipped when another
+  candidate exists. The client's middle initial and Jr./Sr./II/III/IV
+  (`MiddleInitial` / `Suffix` columns, or typed into the name) pick
+  between folders: John F Smith goes in "Smith, John F" over "Smith,
+  John", and the other way round; a folder with a *different* initial
+  or suffix is never used. No folder, or several candidates, means review.
+- The result goes in `manifest.json` (`"match"`), including the client's
+  `Notices` folder.
+
+Setup (the firm has 32-bit Office, so Access is read by a small 32-bit
+Python helper, `src/access_reader.py`; full SSNs/EINs never leave it):
+1. Install 32-bit Python and its environment (once per machine):
+   ```
+   py install 3.15-32
+   py -V:3.15-32 -m venv .venv32
+   .venv32\Scripts\pip install pyodbc
+   ```
+2. Add to `.env`:
+   ```
+   ACCESS_DB_PATH=\\server\share\Clients.accdb
+   ACCESS_DB_PASSWORD=...
+   CLIENT_FOLDERS_ROOT=\\tti-srv01\TTI Clients\Resolution;\\tti-srv01\TTI Clients\Tax Prep Only
+   ```
+3. Check: `python scripts/check_client_folders.py` (counts only). Add a
+   path to also write a CSV for spot-checking (it contains client names,
+   so save it outside the project and delete it afterwards).
+
+If a 64-bit Access driver is ever installed, the app uses it directly
+and the helper isn't needed. Until the database is set up, the watcher
+skips matching. If the database is unreachable, it pauses for 5 minutes
+like it does for Azure.
+
 ## Running
 - Watcher: `python src/intake_watcher.py`
 - Split one file by hand: `python src/pdf_splitter.py path\to\batch.pdf`
 - OCR one notice by hand: `python src/ocr.py path\to\notice_001.pdf`
 - Extract (or re-extract) a batch: `python src/extractor.py <batch folder>`
+- Match (or re-match) a batch: `python src/client_matcher.py <batch folder>`
+- Show the Access schema: `python scripts/show_access_schema.py`
+- Check client folders: `python scripts/check_client_folders.py [--missing] [out.csv]`
 - Retry a failed batch: `python src/retry_failed.py --filename name.pdf`
 
 Each split batch gets a `manifest.json` that lists, for every page, its

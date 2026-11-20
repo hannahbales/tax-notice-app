@@ -7,6 +7,8 @@ from time import monotonic, sleep
 import pymupdf
 
 import config
+import client_db
+from client_matcher import match_batch
 from extractor import extract_batch
 from file_utils import copy_verified, file_hash
 from ocr import OcrUnavailable, ocr_batch
@@ -34,9 +36,10 @@ UNREADABLE_GRACE_SECONDS = 30
 # safety cap for a file that keeps changing (huge or very slow copy).
 MAX_WAIT_SECONDS = 15 * 60
 
-# when Azure OCR is unavailable (bad key, quota used up, outage),
-# stop starting new batches for this long, then try again.
-OCR_PAUSE_SECONDS = 5 * 60
+# when Azure OCR or the client database is unavailable (bad key, quota
+# used up, outage, network share down), stop starting new batches for
+# this long, then try again.
+PAUSE_SECONDS = 5 * 60
 
 # a finished PDF ends with %%EOF (some scanners add trailing bytes).
 EOF_TAIL_BYTES = 2048
@@ -409,6 +412,9 @@ def process_file(path):
             # read taxpayer and notice details from the OCR text.
             extract_batch(batch_dir(manifest))
 
+            # find each notice's client in the Access database.
+            match_clients(batch_dir(manifest))
+
             record_status(
                 file_id=file_id,
                 filename=path.name,
@@ -420,9 +426,9 @@ def process_file(path):
             remove_from_intake(path, file_id)
             return
 
-        except OcrUnavailable as error:
+        except (OcrUnavailable, client_db.ClientDbUnavailable) as error:
             # not this batch's fault: keep it in intake, don't use up
-            # an attempt, and pause until Azure is likely back.
+            # an attempt, and pause until the service is likely back.
             record_status(
                 file_id=file_id,
                 filename=path.name,
@@ -430,7 +436,7 @@ def process_file(path):
                 attempts=attempt - 1,
                 error=str(error),
             )
-            pause_for_ocr(error)
+            pause_processing(error)
             return
 
         except BatchRejected as error:
@@ -475,15 +481,27 @@ def process_file(path):
     )
 
 
-def pause_for_ocr(error):
-    global _paused_until
-    _paused_until = monotonic() + OCR_PAUSE_SECONDS
+def match_clients(folder):
+    """Match notices to clients; skipped until the database is set up."""
+    try:
+        clients = client_db.load_clients()
+    except client_db.ClientDbNotConfigured as error:
+        logger.warning("Client matching skipped: %s", error)
+        return
+    match_batch(folder, clients)
 
+
+def pause_processing(error):
+    global _paused_until
+    _paused_until = monotonic() + PAUSE_SECONDS
+
+    service = "Azure OCR" if isinstance(error, OcrUnavailable) else "Client database"
     logger.error(
-        "Azure OCR unavailable: %s. Pausing new batches for %s minutes; "
+        "%s unavailable: %s. Pausing new batches for %s minutes; "
         "waiting batches stay in intake and resume automatically.",
+        service,
         error,
-        OCR_PAUSE_SECONDS // 60,
+        PAUSE_SECONDS // 60,
     )
 
 
